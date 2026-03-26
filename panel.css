@@ -1,0 +1,57 @@
+#pocketsignal-box {
+  position: fixed;
+  top: 120px;
+  right: 20px;
+  width: 260px;
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+  border: 2px solid #0f3460;
+  border-radius: 12px;
+  padding: 16px;
+  z-index: 999999;
+  font-family: 'Arial', sans-serif;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  backdrop-filter: blur(4px);
+}
+
+#ps-signal {
+  font-size: 32px;
+  font-weight: bold;
+  text-align: center;
+  margin-bottom: 8px;
+  text-shadow: 0 0 10px currentColor;
+  letter-spacing: 2px;
+}
+
+#ps-confidence {
+  font-size: 24px;
+  color: #ffd700;
+  text-align: center;
+  margin-bottom: 12px;
+  font-weight: bold;
+}
+
+#ps-reason {
+  font-size: 12px;
+  color: #ddd;
+  text-align: center;
+  margin-bottom: 8px;
+  min-height: 36px;
+  line-height: 1.5;
+}
+
+#ps-time {
+  font-size: 18px;
+  color: #888;
+  text-align: center;
+  font-weight: bold;
+}
+
+.ps-alert {
+  animation: pulse 0.5s ease-in-out;
+  border-color: #ff6b6b !important;
+}
+
+@keyframes pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); box-shadow: 0 0 30px rgba(255,107,107,0.8); }
+}
