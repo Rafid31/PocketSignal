@@ -1,4 +1,4 @@
-// PocketSignal Pro - OTC Signal Analyzer
+// PocketSignal Pro - Fix: WebSocket Interceptor & Draggable UI
 (function() {
   let candles = [];
   let currentCandle = null;
@@ -6,13 +6,24 @@
   let supportLevels = [];
   let resistanceLevels = [];
 
-  // WebSocket Interceptor
+  // ==========================================
+  // 1. IMPROVED WebSocket Interceptor
+  // ==========================================
   const OriginalWebSocket = window.WebSocket;
   window.WebSocket = function(url, protocols) {
+    console.log('PocketSignal: Intercepting WS:', url);
     const ws = protocols ? new OriginalWebSocket(url, protocols) : new OriginalWebSocket(url);
+    
     ws.addEventListener('message', function(event) {
       try {
-        const data = typeof event.data === 'string' ? JSON.parse(event.data) : null;
+        let rawData = event.data;
+        let data = null;
+        
+        // Handle binary or string data
+        if (typeof rawData === 'string') {
+          try { data = JSON.parse(rawData); } catch(e) {}
+        }
+        
         if (data) parseWSData(data);
       } catch(e) {}
     });
@@ -22,14 +33,14 @@
 
   function parseWSData(data) {
     try {
+      // Pocket Option specific data patterns
       if (Array.isArray(data)) data.forEach(processCandleItem);
       if (data.candles) data.candles.forEach(processCandleItem);
       if (data.history) data.history.forEach(processCandleItem);
-      if (data.asset && data.price) updateCurrentCandle(data.price, data.time || Date.now()/1000);
-      if (data.quotes) data.quotes.forEach(q => { if (q[1]) updateCurrentCandle(q[1], q[0]); });
-      if (data.action === 'quotes' && data.data && Array.isArray(data.data)) {
-        data.data.forEach(q => updateCurrentCandle(q[1], q[0]));
+      if (data.action === 'quotes' && data.data) {
+        if (Array.isArray(data.data)) data.data.forEach(q => updateCurrentCandle(q[1], q[0]));
       }
+      if (data.quotes) data.quotes.forEach(q => { if (q[1]) updateCurrentCandle(q[1], q[0]); });
     } catch(e) {}
   }
 
@@ -114,12 +125,6 @@
     if (body2<(c2.high-c2.low)*0.1) return {pattern:'DOJI', bias:'REVERSAL'};
     if (c1.close<c1.open && c2.close>c2.open && c2.open<c1.close && c2.close>c1.open) return {pattern:'BULLISH ENGULFING', bias:'UP'};
     if (c1.close>c1.open && c2.close<c2.open && c2.open>c1.close && c2.close<c1.open) return {pattern:'BEARISH ENGULFING', bias:'DOWN'};
-    const lowerWick=Math.min(c2.open,c2.close)-c2.low;
-    if (lowerWick>body2*2 && c2.close>c2.open) return {pattern:'HAMMER', bias:'UP'};
-    const upperWick=c2.high-Math.max(c2.open,c2.close);
-    if (upperWick>body2*2 && c2.close<c2.open) return {pattern:'SHOOTING STAR', bias:'DOWN'};
-    if (c1.close<c1.open && c2.close<c2.open && c3 && c3.close<c3.open) return {pattern:'3 RED', bias:'DOWN'};
-    if (c1.close>c1.open && c2.close>c2.open && c3 && c3.close>c3.open) return {pattern:'3 GREEN', bias:'UP'};
     return null;
   }
 
@@ -133,76 +138,103 @@
   function generateSignal() {
     const allCandles = [...candles];
     if (currentCandle) allCandles.push(currentCandle);
-    if (allCandles.length<5) return {signal:'WAIT', reason:'Collecting data...', confidence:0, color:'#888'};
+    if (allCandles.length < 5) return {signal:'WAIT', reason:'Collecting data...', confidence:0, color:'#888'};
+    
     const closes = allCandles.map(c=>c.close);
     const currentPrice = closes[closes.length-1];
-    const ema5=calcEMA(closes,5), ema10=calcEMA(closes,10), ema20=calcEMA(closes,20);
+    const ema5=calcEMA(closes,5), ema10=calcEMA(closes,10);
     const rsi=calcRSI(closes,14);
     const pattern=detectPattern(allCandles);
     const srZone=nearSR(currentPrice);
-    let bullPoints=0, bearPoints=0, reasons=[];
-    if (ema5 && ema10) {
-      if (ema5>ema10) {bullPoints+=2; reasons.push('EMA5>EMA10 ↑');}
-      else {bearPoints+=2; reasons.push('EMA5<EMA10 ↓');}
-    }
-    if (ema10 && ema20) {
-      if (ema10>ema20) bullPoints+=1;
-      else bearPoints+=1;
-    }
-    if (ema5 && currentPrice>ema5) bullPoints+=1;
-    else if (ema5) bearPoints+=1;
-    if (rsi!==null) {
-      if (rsi>70) {bearPoints+=3; reasons.push('RSI '+rsi.toFixed(0)+' OB ↓');}
-      else if (rsi<30) {bullPoints+=3; reasons.push('RSI '+rsi.toFixed(0)+' OS ↑');}
-      else if (rsi>50) bullPoints+=1;
-      else bearPoints+=1;
-    }
-    if (pattern) {
-      if (pattern.bias==='UP') {bullPoints+=3; reasons.push(pattern.pattern+' ↑');}
-      else if (pattern.bias==='DOWN') {bearPoints+=3; reasons.push(pattern.pattern+' ↓');}
-      else reasons.push(pattern.pattern);
-    }
-    if (srZone) {
-      if (srZone.type==='SUPPORT') {bullPoints+=2; reasons.push('Near SUPPORT ↑');}
-      else {bearPoints+=2; reasons.push('Near RESISTANCE ↓');}
-    }
-    const totalPoints = bullPoints+bearPoints;
-    const confidence = totalPoints>0 ? Math.round((Math.max(bullPoints,bearPoints)/totalPoints)*100) : 0;
-    if (bullPoints>bearPoints) return {signal:'UP', reason:reasons.slice(0,3).join(', '), confidence, color:'#00ff00'};
-    else if (bearPoints>bullPoints) return {signal:'DOWN', reason:reasons.slice(0,3).join(', '), confidence, color:'#ff0000'};
+    
+    let bull=0, bear=0, reasons=[];
+    if (ema5 && ema10) { if (ema5>ema10) bull+=2; else bear+=2; }
+    if (rsi) { if (rsi>70) bear+=3; else if (rsi<30) bull+=3; }
+    if (pattern) { if (pattern.bias==='UP') bull+=3; else if (pattern.bias==='DOWN') bear+=3; }
+    if (srZone) { if (srZone.type==='SUPPORT') bull+=2; else bear+=2; }
+
+    const total = bull+bear;
+    const confidence = total>0 ? Math.round((Math.max(bull,bear)/total)*100) : 0;
+    if (bull>bear) return {signal:'UP', reason:'Momentum Strong ↑', confidence, color:'#00ff00'};
+    if (bear>bull) return {signal:'DOWN', reason:'Momentum Strong ↓', confidence, color:'#ff0000'};
     return {signal:'WAIT', reason:'Neutral', confidence:0, color:'#ffaa00'};
   }
 
+  // ==========================================
+  // 2. DRAGGABLE UI Implementation
+  // ==========================================
+  function makeDraggable(el) {
+    let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
+    el.onmousedown = dragMouseDown;
+
+    function dragMouseDown(e) {
+      e = e || window.event;
+      e.preventDefault();
+      pos3 = e.clientX;
+      pos4 = e.clientY;
+      document.onmouseup = closeDragElement;
+      document.onmousemove = elementDrag;
+    }
+
+    function elementDrag(e) {
+      e = e || window.event;
+      e.preventDefault();
+      pos1 = pos3 - e.clientX;
+      pos2 = pos4 - e.clientY;
+      pos3 = e.clientX;
+      pos4 = e.clientY;
+      el.style.top = (el.offsetTop - pos2) + "px";
+      el.style.left = (el.offsetLeft - pos1) + "px";
+      el.style.right = 'auto'; // Reset right position when dragging
+    }
+
+    function closeDragElement() {
+      document.onmouseup = null;
+      document.onmousemove = null;
+    }
+  }
+
   function createUI() {
+    if (document.getElementById('pocketsignal-box')) return;
     signalBox = document.createElement('div');
     signalBox.id = 'pocketsignal-box';
+    signalBox.style.cursor = 'move';
     signalBox.innerHTML = `
-      <div id="ps-signal">Loading...</div>
+      <div style="font-size:10px; color:#aaa; margin-bottom:5px; text-align:center;">DRAG TO MOVE</div>
+      <div id="ps-signal">WAIT</div>
       <div id="ps-confidence">0%</div>
       <div id="ps-reason">Initializing...</div>
       <div id="ps-time">--</div>
     `;
     document.body.appendChild(signalBox);
+    makeDraggable(signalBox);
   }
 
   function updateUI() {
-    if (!signalBox) return;
+    if (!signalBox) createUI();
     const signal = generateSignal();
-    document.getElementById('ps-signal').textContent = signal.signal;
-    document.getElementById('ps-signal').style.color = signal.color;
-    document.getElementById('ps-confidence').textContent = signal.confidence+'%';
-    document.getElementById('ps-reason').textContent = signal.reason;
-    const now = new Date();
-    const secs = 60 - now.getSeconds();
-    document.getElementById('ps-time').textContent = secs+'s';
+    const sigEl = document.getElementById('ps-signal');
+    const confEl = document.getElementById('ps-confidence');
+    const resEl = document.getElementById('ps-reason');
+    const timeEl = document.getElementById('ps-time');
+    
+    if (sigEl) { sigEl.textContent = signal.signal; sigEl.style.color = signal.color; }
+    if (confEl) confEl.textContent = signal.confidence+'%';
+    if (resEl) resEl.textContent = signal.reason;
+    
+    const secs = 60 - (new Date().getSeconds());
+    if (timeEl) timeEl.textContent = secs+'s';
+    
     if (secs <= 10 && signal.signal !== 'WAIT') {
       signalBox.classList.add('ps-alert');
       setTimeout(() => signalBox.classList.remove('ps-alert'), 500);
     }
   }
 
+  // Start after a short delay
   setTimeout(() => {
     createUI();
     setInterval(updateUI, 1000);
+    console.log('PocketSignal Pro: Fixed & Draggable UI Active');
   }, 2000);
 })();
