@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "PocketSignal Pro",
+  "version": "1.0",
+  "description": "OTC Signal Analyzer for Pocket Option - EMA, RSI, MACD, Support/Resistance",
+  "permissions": ["scripting", "storage", "tabs"],
+  "host_permissions": ["*://pocketoption.com/*"],
+  "content_scripts": [
+    {
+      "matches": ["*://pocketoption.com/*"],
+      "js": ["content.js"],
+      "css": ["panel.css"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "PocketSignal Pro"
+  }
+}
